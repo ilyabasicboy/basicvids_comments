@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, col, select
 
 from basicvids_comments.auth import CurrentUser, get_current_user
 from basicvids_comments.db import get_session
 from basicvids_comments.models.comments import CommentChange, CommentCreate, CommentDeleteResponse, CommentList, CommentPublic
+from basicvids_comments.rate_limit import client_identifier, enforce_rate_limit
 from basicvids_comments.schemas.comments import Comment
 
 
@@ -20,9 +21,12 @@ def ensure_can_modify(comment: Comment, current_user: CurrentUser) -> None:
 @router.post("/", response_model=CommentPublic, status_code=201)
 async def create_comment(
     data: CommentCreate,
+    request: Request,
     session: Session = Depends(get_session),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Comment:
+    await enforce_rate_limit("create_comment_ip", client_identifier(request), 30, 60)
+    await enforce_rate_limit("create_comment_user", f"user:{current_user.id}", 10, 60)
     comment = Comment(
         video_id=data.video_id,
         text=data.text.strip(),
@@ -71,9 +75,11 @@ async def get_comment(
 async def change_comment(
     comment_id: str,
     data: CommentChange,
+    request: Request,
     session: Session = Depends(get_session),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Comment:
+    await enforce_rate_limit("change_comment_user", f"user:{current_user.id}", 20, 60)
     comment = session.get(Comment, comment_id)
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
@@ -90,9 +96,11 @@ async def change_comment(
 @router.delete("/{comment_id}", response_model=CommentDeleteResponse, status_code=200)
 async def delete_comment(
     comment_id: str,
+    request: Request,
     session: Session = Depends(get_session),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> CommentDeleteResponse:
+    await enforce_rate_limit("delete_comment_user", f"user:{current_user.id}", 30, 60)
     comment = session.get(Comment, comment_id)
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
