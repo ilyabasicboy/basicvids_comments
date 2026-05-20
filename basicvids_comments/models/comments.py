@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, constr
 class CommentCreate(BaseModel):
     video_id: str
     text: constr(min_length=1, max_length=2000)
+    parent_id: str | None = None
 
 
 class CommentChange(BaseModel):
@@ -17,6 +18,7 @@ class CommentPublic(BaseModel):
 
     id: str
     video_id: str
+    parent_id: str | None = None
     text: str
     author_id: int
     author_username: str | None = None

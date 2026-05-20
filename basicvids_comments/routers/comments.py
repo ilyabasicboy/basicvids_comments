@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from basicvids_comments.auth import CurrentUser, get_current_user
@@ -18,6 +19,19 @@ def ensure_can_modify(comment: Comment, current_user: CurrentUser) -> None:
         raise HTTPException(status_code=403, detail="Only the author or an admin can change this comment")
 
 
+def get_parent_comment_or_400(session: Session, parent_id: str | None, video_id: str) -> Comment | None:
+    if not parent_id:
+        return None
+
+    parent = session.get(Comment, parent_id)
+    if not parent or parent.video_id != video_id:
+        raise HTTPException(status_code=400, detail="Parent comment not found for this video")
+    if parent.parent_id:
+        raise HTTPException(status_code=400, detail="Replies can only be added to top-level comments")
+
+    return parent
+
+
 @router.post("/", response_model=CommentPublic, status_code=201)
 async def create_comment(
     data: CommentCreate,
@@ -27,8 +41,10 @@ async def create_comment(
 ) -> Comment:
     await enforce_rate_limit("create_comment_ip", client_identifier(request), 30, 60)
     await enforce_rate_limit("create_comment_user", f"user:{current_user.id}", 10, 60)
+    get_parent_comment_or_400(session, data.parent_id, data.video_id)
     comment = Comment(
         video_id=data.video_id,
+        parent_id=data.parent_id,
         text=data.text.strip(),
         author_id=current_user.id,
         author_username=current_user.username,
@@ -49,14 +65,25 @@ async def list_comments(
     session: Session = Depends(get_session),
 ) -> CommentList:
     statement = select(Comment)
+    count_statement = select(func.count()).select_from(Comment)
     if video_id:
-        statement = statement.where(Comment.video_id == video_id)
+        statement = statement.where(Comment.video_id == video_id, Comment.parent_id == None)  # noqa: E711
+        count_statement = count_statement.where(Comment.video_id == video_id, Comment.parent_id == None)  # noqa: E711
 
     statement = statement.order_by(col(Comment.created_at).desc()).offset(offset).limit(limit)
     comments = session.exec(statement).all()
+    total_count = session.exec(count_statement).one()
+    if video_id and comments:
+        parent_ids = [comment.id for comment in comments]
+        replies = session.exec(
+            select(Comment)
+            .where(col(Comment.parent_id).in_(parent_ids))
+            .order_by(col(Comment.created_at).asc())
+        ).all()
+        comments = [*comments, *replies]
     return CommentList(
         comments=[CommentPublic.model_validate(comment) for comment in comments],
-        count=len(comments),
+        count=total_count,
     )
 
 
@@ -106,6 +133,9 @@ async def delete_comment(
         raise HTTPException(status_code=404, detail="Comment not found")
     ensure_can_modify(comment, current_user)
 
+    replies = session.exec(select(Comment).where(Comment.parent_id == comment.id)).all()
+    for reply in replies:
+        session.delete(reply)
     session.delete(comment)
     session.commit()
     return CommentDeleteResponse(message="Comment deleted successfully")

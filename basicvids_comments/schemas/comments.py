@@ -12,6 +12,7 @@ def utc_now() -> datetime:
 class Comment(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     video_id: str = Field(index=True, max_length=100)
+    parent_id: str | None = Field(default=None, index=True, max_length=100)
     text: str = Field(max_length=2000)
     author_id: int = Field(index=True)
     author_username: str | None = Field(default=None, max_length=100)

@@ -58,6 +58,18 @@ class TestComments(BaseTestComments):
         )
         return response.json()
 
+    async def create_reply(self, parent_id: str, video_id: str = "video-1"):
+        response = await request(
+            "POST",
+            f"{self.method_url}/",
+            json={
+                "video_id": video_id,
+                "parent_id": parent_id,
+                "text": "Reply comment",
+            },
+        )
+        return response.json()
+
     async def test_create_comment_success(self):
         response = await request(
             "POST",
@@ -73,6 +85,7 @@ class TestComments(BaseTestComments):
         assert CommentPublic(**response_data)
         assert response_data["video_id"] == "video-1"
         assert response_data["text"] == "First comment"
+        assert response_data["parent_id"] is None
         assert response_data["author_id"] == 1
         assert response_data["author_username"] == "user-1"
         assert response_data["author_first_name"] == "Test"
@@ -91,6 +104,56 @@ class TestComments(BaseTestComments):
 
         assert response.status_code == 401
 
+    async def test_create_reply_success(self):
+        parent = await self.create_comment(video_id="video-1")
+
+        response = await request(
+            "POST",
+            f"{self.method_url}/",
+            json={
+                "video_id": "video-1",
+                "parent_id": parent["id"],
+                "text": "Reply comment",
+            },
+        )
+
+        assert response.status_code == 201
+        response_data = response.json()
+        assert response_data["video_id"] == "video-1"
+        assert response_data["parent_id"] == parent["id"]
+        assert response_data["text"] == "Reply comment"
+
+    async def test_create_reply_rejects_parent_from_other_video(self):
+        parent = await self.create_comment(video_id="video-1")
+
+        response = await request(
+            "POST",
+            f"{self.method_url}/",
+            json={
+                "video_id": "video-2",
+                "parent_id": parent["id"],
+                "text": "Wrong video reply",
+            },
+        )
+
+        assert response.status_code == 400
+
+    async def test_create_reply_rejects_nested_reply(self):
+        parent = await self.create_comment(video_id="video-1")
+        reply = await self.create_reply(parent["id"], video_id="video-1")
+
+        response = await request(
+            "POST",
+            f"{self.method_url}/",
+            json={
+                "video_id": "video-1",
+                "parent_id": reply["id"],
+                "text": "Nested reply",
+            },
+        )
+
+        assert response.status_code == 400
+
     async def test_list_comments_success(self):
         await self.create_comment(video_id="video-1")
         await self.create_comment(video_id="video-2")
@@ -101,6 +164,30 @@ class TestComments(BaseTestComments):
         response_data = response.json()
         assert response_data["count"] == 1
         assert response_data["comments"][0]["video_id"] == "video-1"
+
+    async def test_list_comments_includes_replies(self):
+        parent = await self.create_comment(video_id="video-1")
+        await self.create_reply(parent["id"], video_id="video-1")
+
+        response = await request("GET", f"{self.method_url}/", params={"video_id": "video-1"})
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["count"] == 1
+        assert len(response_data["comments"]) == 2
+        assert any(comment["parent_id"] is None for comment in response_data["comments"])
+        assert any(comment["parent_id"] == parent["id"] for comment in response_data["comments"])
+
+    async def test_list_comments_count_returns_total_count_with_limit(self):
+        await self.create_comment(video_id="video-1")
+        await self.create_comment(video_id="video-1")
+
+        response = await request("GET", f"{self.method_url}/", params={"video_id": "video-1", "offset": 0, "limit": 1})
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["count"] == 2
+        assert len(response_data["comments"]) == 1
 
     async def test_get_comment_success(self):
         comment = await self.create_comment()
@@ -155,6 +242,16 @@ class TestComments(BaseTestComments):
         assert response.json() == {"message": "Comment deleted successfully"}
 
         response = await request("GET", f"{self.method_url}/{comment['id']}")
+        assert response.status_code == 404
+
+    async def test_delete_parent_comment_deletes_replies(self):
+        comment = await self.create_comment()
+        reply = await self.create_reply(comment["id"])
+
+        response = await request("DELETE", f"{self.method_url}/{comment['id']}")
+
+        assert response.status_code == 200
+        response = await request("GET", f"{self.method_url}/{reply['id']}")
         assert response.status_code == 404
 
     async def test_delete_comment_forbidden_for_non_author(self):
