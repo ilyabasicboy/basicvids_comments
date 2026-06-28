@@ -4,17 +4,17 @@ Comments microservice for BasicVids.
 
 ## Stack
 
-* Gunicorn
-* FastAPI
-* SQLModel
-* SQLite by default
+- Gunicorn
+- FastAPI
+- SQLModel
+- Redis
 
 ## Development
 
 Use a virtual environment:
 
 ```bash
-virtualenv venv -p python3
+virtualenv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -35,49 +35,51 @@ uvicorn basicvids_comments.main:app --reload
 
 ```bash
 mkdir -p data
+cp .env.example data/.env
 docker compose up -d --build
+```
+
+The service is available through the shared gateway at:
+
+```text
+http://localhost:8080/api/v1/comments/
 ```
 
 ## Configuration
 
-| Variable              | Default                                           | Description                         |
-| --------------------- | ------------------------------------------------- | ----------------------------------- |
-| DATA_PATH             | ./data                                            | Data directory mounted in container |
-| DATABASE_URL          | sqlite:///./data/database.db                      | Metadata database URL               |
-| AUTH_CURRENT_USER_URL | http://basicvids_auth:8000/api/v1/users/detail/  | Auth service current-user endpoint  |
-
-Project environment can be placed in:
+Project environment is loaded from:
 
 ```text
 ./data/.env
 ```
 
-## API Documentation
+Start from:
 
-### Health Check
+```text
+./.env.example
+```
 
-- **GET** `/health`
-  - **Response:** `{ "status": "ok" }`
+Database examples:
 
-### Comments
+```env
+# SQLite default
+# DATABASE_URL=sqlite:///./data/database.db
 
-- **POST** `/api/v1/comments/`
-  - **Requires:** authentication
-  - **Body:** `{ "video_id": "video-id", "text": "Comment text" }`
-  - **Response:** `{ id, video_id, text, author_id, author_username, author_first_name, author_last_name, created_at, updated_at }`
+# PostgreSQL example
+DATABASE_URL=postgresql://basicvids_comments_user:change_me@host.docker.internal:5432/basicvids_comments
+```
 
-- **GET** `/api/v1/comments/`
-  - **Query parameters:** `video_id` optional, `offset` default 0, `limit` default 20 max 100
-  - **Response:** `{ comments: [...], count }`
+Important variables:
 
-- **GET** `/api/v1/comments/{comment_id}`
-  - **Response:** `{ id, video_id, text, author_id, author_username, author_first_name, author_last_name, created_at, updated_at }`
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DATA_PATH` | `./data` | Data directory mounted in container |
+| `DATABASE_URL` | `sqlite:///./data/database.db` | Metadata database URL |
+| `REDIS_URL` | `redis://localhost:6379/2` | Redis connection |
+| `AUTH_CURRENT_USER_URL` | `http://basicvids_auth:8000/api/v1/users/detail/` | Auth service current-user endpoint |
 
-- **PATCH** `/api/v1/comments/{comment_id}`
-  - **Requires:** authentication as the comment author or an admin
-  - **Body:** `{ "text": "Changed comment text" }`
-  - **Response:** `{ id, video_id, text, author_id, author_username, author_first_name, author_last_name, created_at, updated_at }`
+## Healthcheck
 
-- **DELETE** `/api/v1/comments/{comment_id}`
-  - **Requires:** authentication as the comment author or an admin
-  - **Response:** `{ "message": "Comment deleted successfully" }`
+```text
+http://localhost:8080/comments/health
+```
